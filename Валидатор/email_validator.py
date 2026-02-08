@@ -10,7 +10,7 @@ import smtplib
 import socket
 import time
 import os
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, Callable
 import logging
 from datetime import datetime
 import warnings
@@ -761,9 +761,18 @@ class EmailValidator:
                 # Не проверяем репутацию и подозрительные домены в лояльном режиме
             )
         
-        # Если catch-all не принимается и это catch-all адрес, то невалиден
-        if not self.accept_catch_all and smtp_results['catch_all'] == 'Да':
+        # Catch-all адреса помечаем как неопределённые (X), опция "считать валидными" убрана
+        is_valid_ignoring_catch_all = is_valid_for_mailing
+        if smtp_results['catch_all'] == 'Да':
             is_valid_for_mailing = False
+        
+        # Определяем значение в столбце "Валидность": Да / Нет / X (неопределённый = catch-all)
+        if is_valid_for_mailing:
+            validity_value = 'Да'
+        elif smtp_results['catch_all'] == 'Да' and is_valid_ignoring_catch_all:
+            validity_value = 'X'  # неопределённый (catch-all)
+        else:
+            validity_value = 'Нет'
         
         # Формирование результатов согласно структуре из примера
         # Примечание: В столбце "Catch-all адрес" прочерк (–) означает, что не удалось определить,
@@ -777,7 +786,7 @@ class EmailValidator:
             'Email': email,
             'Пользователь': local_part if local_part else '',
             'Домен': domain if domain else '',
-            'Валидность': 'Да' if is_valid_for_mailing else 'Нет',
+            'Валидность': validity_value,
             'Корректность': 'Да' if syntax_valid else 'Нет',
             'Надежность': reliability,
             'Одноразовый (DEA)': 'Да' if is_disposable else 'Нет',
@@ -815,6 +824,7 @@ def save_results_to_excel(results_df: pd.DataFrame, output_file: str, is_checkpo
             # Определение цветов
             green_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
             yellow_fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+            orange_fill = PatternFill(start_color='FFCC80', end_color='FFCC80', fill_type='solid')  # неопределённый (X)
             
             # Получение индексов столбцов по названиям
             header_row = 1
@@ -836,10 +846,12 @@ def save_results_to_excel(results_df: pd.DataFrame, output_file: str, is_checkpo
                     
                     value_str = str(value).strip()
                     
-                    # Валидность
+                    # Валидность (Да / Нет / X — неопределённый)
                     if col_name == 'Валидность':
                         if value_str == 'Да':
                             cell.fill = green_fill
+                        elif value_str == 'X':
+                            cell.fill = orange_fill
                         else:
                             cell.fill = yellow_fill
                     
@@ -954,10 +966,234 @@ def save_results_to_excel(results_df: pd.DataFrame, output_file: str, is_checkpo
             logger.info(f"Результаты сохранены в CSV: {csv_file}")
 
 
+def _find_email_column(df: pd.DataFrame) -> str:
+    """Определение столбца с email по названию (любой порядок столбцов)."""
+    for col in df.columns:
+        col_lower = str(col).strip().lower()
+        if any(kw in col_lower for kw in ['email', 'e-mail', 'почта', 'mail', 'адрес', 'e-mail']):
+            return col
+    return df.columns[0]
+
+
+def process_excel_file_advanced(
+    input_file: str,
+    output_file: Optional[str] = None,
+    check_smtp: bool = True,
+    timeout: int = 10,
+    accept_catch_all: bool = False,
+    max_emails: Optional[int] = None,
+    validation_mode: str = 'strict',
+    include_full_results_sheet: bool = True,
+    only_valid_emails_sheet: bool = False,
+    progress_callback: Optional[Callable[[int, int, str, float, float], None]] = None,
+    stop_flag: Optional[dict] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Обработка Excel файла с сохранением исходной таблицы и опциями вывода.
+
+    - Лист 1 «Данные»: исходная таблица + столбец «Статус валидации» (Да/Нет/X) рядом с столбцом Email.
+    - Лист 2 «Результаты проверки»: полная детализация (если include_full_results_sheet=True).
+    - Лист 3 «Только валидные»: строки с валидными email (если only_valid_emails_sheet=True).
+
+    Args:
+        input_file: путь к входному Excel
+        output_file: путь к выходному файлу (если None — генерируется)
+        check_smtp, timeout, accept_catch_all, max_emails, validation_mode: параметры валидации
+        include_full_results_sheet: добавлять лист с полными результатами (по умолчанию True)
+        only_valid_emails_sheet: добавлять лист только с валидными почтами (по умолчанию False)
+        progress_callback: callback(current, total, message, percent, eta_seconds) для GUI
+        stop_flag: dict с ключом 'stop' (True для остановки)
+
+    Returns:
+        (table_with_status_df, full_results_df)
+    """
+    base_name = os.path.splitext(os.path.basename(input_file))[0]
+    if output_file is None:
+        output_dir = os.path.dirname(input_file) or '.'
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(output_dir, f"{base_name}_validated_{timestamp}.xlsx")
+
+    if not os.path.exists(input_file):
+        raise FileNotFoundError(f"Файл не найден: {input_file}")
+
+    logger.info(f"Чтение файла: {input_file}")
+    ext = os.path.splitext(input_file)[1].lower()
+    if ext == '.csv':
+        df = pd.read_csv(input_file, encoding='utf-8-sig')
+    else:
+        df = pd.read_excel(input_file, sheet_name=0)
+    if df.empty:
+        raise ValueError("Файл пустой или не содержит данных")
+
+    email_col = _find_email_column(df)
+    if email_col not in df.columns:
+        email_col = df.columns[0]
+        logger.warning(f"Столбец с email не найден. Используется первый: {email_col}")
+
+    # Строки и их email (порядок строк сохраняем)
+    row_emails = []
+    seen = set()
+    unique_emails_ordered = []
+    for idx, val in df[email_col].items():
+        email_str = (str(val).strip() if pd.notna(val) else '').strip()
+        if not email_str or email_str.lower() in ('nan', 'none', ''):
+            row_emails.append((idx, ''))
+            continue
+        email_lower = email_str.lower()
+        row_emails.append((idx, email_str))
+        if email_lower not in seen:
+            seen.add(email_lower)
+            unique_emails_ordered.append(email_str)
+
+    if max_emails and max_emails > 0:
+        unique_emails_ordered = unique_emails_ordered[:max_emails]
+
+    if not unique_emails_ordered:
+        raise ValueError("Не найдено email адресов для проверки")
+
+    validator = EmailValidator(
+        timeout=timeout,
+        check_smtp=check_smtp,
+        accept_catch_all=accept_catch_all,
+        validation_mode=validation_mode,
+    )
+    total = len(unique_emails_ordered)
+    results_list = []
+    email_to_status = {}
+    start_time = time.time()
+
+    for i, email in enumerate(unique_emails_ordered, 1):
+        if stop_flag and stop_flag.get('stop'):
+            logger.info("Остановка по запросу пользователя")
+            break
+        if progress_callback:
+            try:
+                percent = 100.0 * i / total if total else 0
+                elapsed = time.time() - start_time
+                avg_time = elapsed / i if i > 0 else 0
+                # Показываем ETA только с 5-й почты, чтобы время не прыгало
+                eta_seconds = (avg_time * (total - i)) if (total - i) > 0 and i >= 5 else 0
+                progress_callback(i, total, f"Проверка: {email[:50]}...", percent, eta_seconds)
+            except Exception:
+                pass
+        logger.info(f"[{i}/{total}] Проверка: {email}")
+        try:
+            res = validator.validate_email(email)
+            results_list.append(res)
+            email_to_status[email.lower()] = res.get('Валидность', 'Нет')
+        except Exception as e:
+            logger.error(f"Ошибка при проверке {email}: {e}")
+            results_list.append({
+                'Email': email,
+                'Пользователь': '', 'Домен': '',
+                'Валидность': 'Нет', 'Корректность': 'Нет', 'Надежность': 'Нет',
+                'Одноразовый (DEA)': '–', 'Получение DNS, MX': 'Нет',
+                'Связь с SMTP-сервером': 'Нет', 'Email активен': 'Нет',
+                'Доставляемость': 'Нет', 'Catch-all адрес': 'Нет',
+                'Email переполнен': '–', 'Ролевой аккаунт': 'Нет',
+                'Время проверки, сек': 0, 'Попыток проверки': 0, 'МХ-записи': '',
+            })
+            email_to_status[email.lower()] = 'Нет'
+        if check_smtp and i % 10 == 0:
+            time.sleep(1)
+
+    # Статус по строкам (в порядке индексов исходной таблицы)
+    status_by_idx = {}
+    for idx, email in row_emails:
+        if not email:
+            status_by_idx[idx] = '–'
+        else:
+            status_by_idx[idx] = email_to_status.get(email.lower(), '–')
+
+    # Вставляем столбец «Статус валидации» сразу после столбца с email
+    col_list = list(df.columns)
+    pos = col_list.index(email_col) + 1
+    new_cols = col_list[:pos] + ['Статус валидации'] + col_list[pos:]
+    table_with_status = df.reindex(columns=new_cols)
+    table_with_status['Статус валидации'] = table_with_status.index.map(lambda i: status_by_idx.get(i, '–'))
+
+    # Полные результаты (в порядке проверки)
+    full_results_df = pd.DataFrame(results_list)
+    column_order = [
+        'Email', 'Пользователь', 'Домен', 'Валидность', 'Надежность', 'МХ-записи',
+        'Корректность', 'Одноразовый (DEA)', 'Получение DNS, MX', 'Связь с SMTP-сервером',
+        'Email активен', 'Доставляемость', 'Catch-all адрес',
+        'Email переполнен', 'Ролевой аккаунт', 'Время проверки, сек', 'Попыток проверки',
+    ]
+    available = [c for c in column_order if c in full_results_df.columns]
+    remaining = [c for c in full_results_df.columns if c not in available]
+    full_results_df = full_results_df[available + remaining]
+
+    # Сохранение в Excel: лист 1 — данные, лист 2 — результаты (опционально), лист 3 — только валидные (опционально)
+    green_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+    yellow_fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+    orange_fill = PatternFill(start_color='FFCC80', end_color='FFCC80', fill_type='solid')
+
+    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+        table_with_status.to_excel(writer, sheet_name='Данные', index=False)
+        ws_data = writer.sheets['Данные']
+        # Форматирование столбца «Статус валидации» на листе «Данные» (Да / Нет / X)
+        for row_idx in range(2, len(table_with_status) + 2):
+            cell = ws_data.cell(row=row_idx, column=pos + 1)
+            if cell.value is not None:
+                v = str(cell.value).strip()
+                cell.fill = green_fill if v == 'Да' else (orange_fill if v == 'X' else yellow_fill)
+        for col in ws_data.columns:
+            max_len = max((len(str(c.value or '')) for c in col), default=0)
+            ws_data.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+        if include_full_results_sheet:
+            full_results_df.to_excel(writer, sheet_name='Результаты проверки', index=False)
+            ws_full = writer.sheets['Результаты проверки']
+            header_row = 1
+            col_indices = {}
+            for idx, cell in enumerate(ws_full[header_row], 1):
+                if cell.value:
+                    col_indices[cell.value] = idx - 1
+            for row in ws_full.iter_rows(min_row=2):
+                for col_name, col_idx in col_indices.items():
+                    if col_idx >= len(row):
+                        continue
+                    cell = row[col_idx]
+                    val = cell.value
+                    if val is None:
+                        continue
+                    vs = str(val).strip()
+                    if col_name == 'Валидность':
+                        cell.fill = green_fill if vs == 'Да' else (orange_fill if vs == 'X' else yellow_fill)
+                    elif col_name in ('Корректность', 'Надежность', 'Одноразовый (DEA)', 'Получение DNS, MX',
+                                      'Связь с SMTP-сервером', 'Email активен', 'Доставляемость',
+                                      'Catch-all адрес', 'Email переполнен', 'Ролевой аккаунт'):
+                        if vs in ('Да', 'Высокая', 'Средняя') or (col_name == 'Catch-all адрес' and vs == 'Нет'):
+                            cell.fill = green_fill
+                        else:
+                            cell.fill = yellow_fill
+            for col in ws_full.columns:
+                max_len = max((len(str(c.value or '')) for c in col), default=0)
+                ws_full.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+        if only_valid_emails_sheet:
+            valid_mask = table_with_status['Статус валидации'] == 'Да'
+            only_valid_df = table_with_status.loc[valid_mask].copy()
+            only_valid_df.to_excel(writer, sheet_name='Только валидные', index=False)
+            ws_valid = writer.sheets['Только валидные']
+            status_col_idx = new_cols.index('Статус валидации') + 1
+            for row_idx in range(2, len(only_valid_df) + 2):
+                cell = ws_valid.cell(row=row_idx, column=status_col_idx)
+                cell.fill = green_fill
+            for col in ws_valid.columns:
+                max_len = max((len(str(c.value or '')) for c in col), default=0)
+                ws_valid.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    logger.info(f"Результаты сохранены в: {output_file}")
+    return table_with_status, full_results_df
+
+
 def process_excel_file(input_file: str, output_file: Optional[str] = None, 
                       check_smtp: bool = True, timeout: int = 10, 
                       accept_catch_all: bool = False, max_emails: Optional[int] = None,
-                      validation_mode: str = 'strict') -> pd.DataFrame:
+                      validation_mode: str = 'strict',
+                      progress_callback: Optional[Callable[[str, int, int, float, float], None]] = None) -> pd.DataFrame:
     """
     Обработка Excel файла с email адресами
     
@@ -966,9 +1202,10 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
         output_file: Путь для сохранения результата (если None, генерируется автоматически)
         check_smtp: Выполнять ли SMTP проверку
         timeout: Таймаут для сетевых запросов
-        accept_catch_all: Считать ли catch-all адреса валидными
+        accept_catch_all: Не используется (оставлен для совместимости). Catch-all помечаются как X.
         max_emails: Максимальное количество email для проверки (None = все)
         validation_mode: Режим валидации ('strict' - строгий, 'lenient' - лояльный)
+        progress_callback: Колбэк (имя_файла, обработано, всего, процент, осталось_сек) для прогресса
         
     Returns:
         pd.DataFrame: DataFrame с результатами проверки
@@ -1064,12 +1301,31 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
             output_dir = os.path.dirname(input_file) if os.path.dirname(input_file) else '.'
             base_output_name = os.path.join(output_dir, os.path.splitext(os.path.basename(input_file))[0])
         
+        base_filename = os.path.basename(input_file)
         for i, email in enumerate(emails, 1):
             try:
                 email_start_time = time.time()
                 logger.info(f"[{i}/{total_emails}] Проверка: {email}")
                 result = validator.validate_email(email)
                 results.append(result)
+                
+                # Вывод в терминал: одна строка на почту — валидная / нет / неопределенный
+                val = result.get('Валидность', 'Нет')
+                if val == 'Да':
+                    print('валидная')
+                elif val == 'X':
+                    print('неопределенный')
+                else:
+                    print('нет')
+                
+                # Прогресс: ETA только с 5-й почты, чтобы время не прыгало
+                elapsed_time = time.time() - start_time
+                avg_time_actual = elapsed_time / i if i > 0 else 0
+                remaining_emails = total_emails - i
+                eta_seconds = (avg_time_actual * remaining_emails) if remaining_emails > 0 and i >= 5 else 0
+                percent = 100.0 * i / total_emails
+                if progress_callback:
+                    progress_callback(base_filename, i, total_emails, percent, eta_seconds)
                 
                 # Промежуточное сохранение каждые 1000 проверенных почт
                 if i % 1000 == 0:
@@ -1095,22 +1351,16 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
                     save_results_to_excel(checkpoint_df, checkpoint_file, is_checkpoint=True)
                     logger.info(f"✅ Промежуточное сохранение: {i} из {total_emails} проверенных почт")
                 
-                # Вычисление оставшегося времени на основе реальной скорости
-                elapsed_time = time.time() - start_time
+                # Логирование прогресса (в лог-файл)
                 if i > 0:
-                    avg_time_actual = elapsed_time / i
-                    remaining_emails = total_emails - i
-                    estimated_remaining = avg_time_actual * remaining_emails
-                    
-                    if estimated_remaining > 60:
-                        remaining_str = f"{int(estimated_remaining // 60)} мин {int(estimated_remaining % 60)} сек"
+                    if eta_seconds > 60:
+                        remaining_str = f"{int(eta_seconds // 60)} мин {int(eta_seconds % 60)} сек"
                     else:
-                        remaining_str = f"{int(estimated_remaining)} сек"
-                    
-                    logger.info(f"  Прогресс: {i}/{total_emails} ({i/total_emails*100:.1f}%) | Осталось примерно: {remaining_str}")
+                        remaining_str = f"{int(eta_seconds)} сек"
+                    logger.info(f"  Прогресс: {i}/{total_emails} ({percent:.1f}%) | Осталось примерно: {remaining_str}")
                 
                 # Логирование результата
-                status = "✅ ВАЛИДЕН" if result.get('Валидность') == 'Да' else "❌ НЕВАЛИДЕН"
+                status = "✅ ВАЛИДЕН" if val == 'Да' else ("⚠️ НЕОПРЕДЕЛЁННЫЙ" if val == 'X' else "❌ НЕВАЛИДЕН")
                 reliability = result.get('Надежность', 'Нет')
                 logger.info(f"  Результат: {status} - Надежность: {reliability}")
                 
@@ -1120,6 +1370,7 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
                     
             except Exception as e:
                 logger.error(f"Ошибка при проверке {email}: {e}")
+                print('нет')
                 if email not in validator.check_attempts:
                     validator.check_attempts[email] = 0
                 validator.check_attempts[email] += 1
@@ -1142,6 +1393,14 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
                     'Попыток проверки': validator.check_attempts[email],
                     'МХ-записи': ''
                 })
+                # Прогресс и колбэк после ошибки (ETA только с 5-й почты)
+                elapsed_time = time.time() - start_time
+                avg_time_actual = elapsed_time / i if i > 0 else 0
+                remaining_emails = total_emails - i
+                eta_seconds = (avg_time_actual * remaining_emails) if remaining_emails > 0 and i >= 5 else 0
+                percent = 100.0 * i / total_emails
+                if progress_callback:
+                    progress_callback(base_filename, i, total_emails, percent, eta_seconds)
                 
                 # Промежуточное сохранение после ошибки тоже (если достигли кратного 1000)
                 if i % 1000 == 0:
@@ -1210,8 +1469,11 @@ def process_excel_file(input_file: str, output_file: Optional[str] = None,
         if 'Валидность' in results_df.columns:
             valid_count = len(results_df[results_df['Валидность'] == 'Да'])
             invalid_count = len(results_df[results_df['Валидность'] == 'Нет'])
+            indeterminate_count = len(results_df[results_df['Валидность'] == 'X'])
             logger.info(f"Валидных для рассылки: {valid_count} ({valid_count / processed_count * 100:.1f}%)")
             logger.info(f"Невалидных: {invalid_count} ({invalid_count / processed_count * 100:.1f}%)")
+            if indeterminate_count > 0:
+                logger.info(f"Неопределённых (catch-all): {indeterminate_count} ({indeterminate_count / processed_count * 100:.1f}%)")
         
         if 'Надежность' in results_df.columns:
             reliability_stats = results_df['Надежность'].value_counts()
@@ -1300,11 +1562,7 @@ if __name__ == "__main__":
     else:
         print("Выбран строгий режим (максимальная точность)")
     
-    # 4. Считаем ли валидными catch-all почты
-    catch_all_choice = input("Считаем ли валидными catch-all почты? (да/нет, по умолчанию: нет): ").strip().lower()
-    accept_catch_all = catch_all_choice in ['да', 'yes', 'y', '1', 'true']
-    
-    # 5. Сколько почт проверять
+    # 4. Сколько почт проверять
     max_emails_input = input("Сколько почт из списка вы хотите проверить? (если нет ответа, то все): ").strip()
     max_emails = None
     if max_emails_input:
@@ -1327,7 +1585,8 @@ if __name__ == "__main__":
         process_excel_file(
             input_file=input_file,
             check_smtp=check_smtp,
-            accept_catch_all=accept_catch_all,
+            timeout=10,
+            accept_catch_all=False,
             max_emails=max_emails,
             validation_mode=validation_mode
         )

@@ -1,5 +1,5 @@
 """
-GUI приложение для валидации email адресов - Валидатор 3000
+GUI приложение для валидации email адресов — Валидатор
 """
 
 import tkinter as tk
@@ -7,7 +7,7 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 import os
 from datetime import datetime
-from email_validator import process_excel_file
+from email_validator import process_excel_file_advanced
 import logging
 import math
 
@@ -20,8 +20,8 @@ class RoundedButton(tk.Canvas):
     def __init__(self, parent, text, command, width=200, height=40, 
                  bg_color="#1976D2", hover_color="#1565C0", text_color="white",
                  corner_radius=20, font=("Arial", 11, "bold")):
-        super().__init__(parent, width=width, height=height, 
-                        highlightthickness=0, relief=tk.FLAT, bg="#E3F2FD")
+        super().__init__(parent, width=width, height=height,
+                        highlightthickness=0, relief=tk.FLAT, bg="#F8FAFC")
         self.command = command
         self.bg_color = bg_color
         self.hover_color = hover_color
@@ -109,223 +109,173 @@ class RoundedButton(tk.Canvas):
         self.bind("<Leave>", self._on_leave)
 
 
-class SnakeProgressBar(tk.Canvas):
-    """Кастомный прогресс-бар в виде ползущей змейки"""
-    def __init__(self, parent, width=600, height=30, **kwargs):
-        super().__init__(parent, width=width, height=height, 
-                        highlightthickness=0, bg="#E3F2FD", **kwargs)
-        self.width = width
-        self.height = height
-        self.position = 0
-        self.animation_id = None
-        self.segment_count = 8
-        self.segment_width = 40
-        self.segment_spacing = 20
-        
-    def start(self):
-        """Запуск анимации"""
-        self.position = 0
-        self.animate()
-        
-    def stop(self):
-        """Остановка анимации"""
-        if self.animation_id:
-            self.after_cancel(self.animation_id)
-            self.animation_id = None
-        self.delete("all")
-        # Очищаем фон
-        self.create_rectangle(0, 0, self.width, self.height, 
-                            fill="#E3F2FD", outline="#BBDEFB", width=2)
-        
-    def animate(self):
-        """Анимация движения змейки"""
-        self.delete("all")
-        
-        # Рисуем фон
-        self.create_rectangle(0, 0, self.width, self.height, 
-                            fill="#E3F2FD", outline="#BBDEFB", width=2)
-        
-        # Рисуем змейку
-        for i in range(self.segment_count):
-            x = (self.position + i * (self.segment_width + self.segment_spacing)) % (self.width + self.segment_width)
-            
-            # Градиент цветов от темно-синего к голубому
-            if i == 0:
-                color = "#1976D2"  # Темно-синий (голова)
-            elif i < self.segment_count // 2:
-                # Переход от темно-синего к синему
-                ratio = i / (self.segment_count // 2)
-                r = int(25 + (66 - 25) * ratio)
-                g = int(118 + (165 - 118) * ratio)
-                b = int(210 + (245 - 210) * ratio)
-                color = f"#{r:02x}{g:02x}{b:02x}"
-            else:
-                # Переход к голубому
-                ratio = (i - self.segment_count // 2) / (self.segment_count // 2)
-                r = int(66 + (3 - 66) * ratio)
-                g = int(165 + (169 - 165) * ratio)
-                b = int(245 + (244 - 245) * ratio)
-                color = f"#{r:02x}{g:02x}{b:02x}"
-            
-            # Скругленный овал для сегмента
-            self.create_oval(x, 5, x + self.segment_width, self.height - 5,
-                           fill=color, outline="#0D47A1", width=2)
-        
-        # Обновляем позицию
-        self.position += 3
-        if self.position > self.width:
-            self.position = -self.segment_width * self.segment_count
-        
-        self.animation_id = self.after(20, self.animate)
-
-
 class EmailValidatorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Валидатор 3000")
-        self.root.geometry("850x750")
-        self.root.resizable(False, False)
+        self.root.title("Валидатор V3")
+        self.root.geometry("880x820")
+        self.root.minsize(600, 620)
+        self.root.resizable(True, True)
         
-        # Сине-голубая цветовая схема
+        # Цветовая схема: спокойные тона
         self.colors = {
-            'primary': '#1976D2',      # Темно-синий
-            'secondary': '#42A5F5',     # Синий
-            'accent': '#03A9F4',       # Голубой
-            'light': '#E3F2FD',        # Светло-голубой
-            'dark': '#0D47A1',         # Очень темно-синий
-            'success': '#4CAF50',      # Зеленый для успеха
-            'warning': '#FF9800',       # Оранжевый для предупреждений
-            'error': '#F44336'         # Красный для ошибок
+            'primary': '#2563EB',
+            'secondary': '#3B82F6',
+            'accent': '#60A5FA',
+            'light': '#F8FAFC',
+            'panel': '#F1F5F9',
+            'dark': '#1E293B',
+            'success': '#22C55E',
+            'warning': '#F59E0B',
+            'error': '#EF4444',
         }
         
-        # Настройка фона окна
         self.root.configure(bg=self.colors['light'])
         
         # Переменные
-        self.input_file = tk.StringVar()
+        self.input_files = []  # список путей к файлам
         self.output_file = tk.StringVar()
-        self.check_smtp = tk.BooleanVar(value=True)
-        self.accept_catch_all = tk.BooleanVar(value=False)
         self.validation_mode = tk.StringVar(value="strict")
         self.max_emails = tk.StringVar()
         self.timeout = tk.StringVar(value="10")
-        
+        # Опции результата
+        self.include_full_results_sheet = tk.BooleanVar(value=True)
+        self.only_valid_emails_sheet = tk.BooleanVar(value=False)
         # Результат обработки
-        self.result_file = None
+        self.result_files = []
         self.is_processing = False
+        self.stop_flag = {}
         
         self.create_widgets()
         
     def create_widgets(self):
-        # Заголовок с российским триколором
-        header_frame = tk.Canvas(self.root, height=100, highlightthickness=0, bg="#E3F2FD")
+        # Заголовок: компактный, без триколора
+        header_frame = tk.Frame(self.root, bg=self.colors['primary'], height=72, pady=16)
         header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
         
-        # Функция для отрисовки триколора
-        def draw_tricolor(event=None):
-            width = header_frame.winfo_width() if header_frame.winfo_width() > 1 else 850
-            stripe_height = 100 // 3
-            
-            header_frame.delete("tricolor")
-            
-            # Белая полоса (верхняя)
-            header_frame.create_rectangle(0, 0, width, stripe_height, fill="white", outline="", tags="tricolor")
-            # Синяя полоса (средняя)
-            header_frame.create_rectangle(0, stripe_height, width, stripe_height * 2, fill="#0039A6", outline="", tags="tricolor")
-            # Красная полоса (нижняя)
-            header_frame.create_rectangle(0, stripe_height * 2, width, 100, fill="#D52B1E", outline="", tags="tricolor")
-            
-            # Обновляем позицию текста
-            header_frame.coords("title_text", width // 2, 50)
-        
-        header_frame.bind("<Configure>", draw_tricolor)
-        
-        # Название поверх триколора с тенью для читаемости
         title_label = tk.Label(
-            header_frame, 
-            text="Валидатор 3000",
-            font=("Arial", 28, "bold"),
-            bg="#0039A6",  # Синий фон для лучшей читаемости
+            header_frame,
+            text="Валидатор V3",
+            font=("Segoe UI", 24, "bold"),
+            bg=self.colors['primary'],
             fg="white",
-            padx=30,
-            pady=10,
-            relief=tk.RAISED,
-            bd=2
         )
-        header_frame.create_window(425, 50, window=title_label, tags="title_text")
+        title_label.pack(expand=True)
         
-        # Вызываем отрисовку после создания
-        self.root.after(100, draw_tricolor)
+        # Основной контейнер со скроллом
+        canvas = tk.Canvas(self.root, bg=self.colors['light'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=canvas.yview)
         
-        # Основной контейнер
-        main_frame = tk.Frame(self.root, bg=self.colors['light'])
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        main_frame = tk.Frame(canvas, bg=self.colors['light'])
+        self._canvas = canvas
+        self._main_frame = main_frame
         
-        # Фрейм для загрузки файла
+        def _on_frame_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        def _on_canvas_configure(e):
+            canvas.itemconfig(self._canvas_window_id, width=e.width)
+        
+        main_frame.bind("<Configure>", _on_frame_configure)
+        self._canvas_window_id = canvas.create_window((0, 0), window=main_frame, anchor=tk.NW)
+        canvas.bind("<Configure>", _on_canvas_configure)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=(16, 16))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(16, 16))
+        
+        # Фрейм для загрузки файлов
         file_frame = tk.LabelFrame(
-            main_frame, 
-            text="📁 Файл с email адресами", 
-            font=("Arial", 11, "bold"),
-            bg=self.colors['light'],
+            main_frame,
+            text="📁 Файлы с email адресами (можно несколько)",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            padx=15,
-            pady=15,
-            relief=tk.RAISED,
-            bd=2
+            padx=12,
+            pady=12,
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#E2E8F0"
         )
-        file_frame.pack(fill=tk.X, pady=10)
+        file_frame.pack(fill=tk.X, pady=(0, 12))
         
-        file_entry_frame = tk.Frame(file_frame, bg=self.colors['light'])
-        file_entry_frame.pack(fill=tk.X)
+        file_list_frame = tk.Frame(file_frame, bg=self.colors['panel'])
+        file_list_frame.pack(fill=tk.BOTH, expand=True)
         
-        file_entry = tk.Entry(
-            file_entry_frame, 
-            textvariable=self.input_file, 
-            width=50, 
-            state="readonly",
-            font=("Arial", 10),
-            relief=tk.SUNKEN,
-            bd=2
+        list_scroll = tk.Scrollbar(file_list_frame)
+        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.file_listbox = tk.Listbox(
+            file_list_frame,
+            height=4,
+            font=("Segoe UI", 9),
+            selectmode=tk.EXTENDED,
+            yscrollcommand=list_scroll.set,
+            bg="white",
+            fg=self.colors['dark']
         )
-        file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        list_scroll.config(command=self.file_listbox.yview)
+        
+        btn_frame = tk.Frame(file_frame, bg=self.colors['panel'])
+        btn_frame.pack(fill=tk.X, pady=(8, 0))
         
         select_btn = RoundedButton(
-            file_entry_frame,
-            text="Выбрать файл",
-            command=self.select_input_file,
+            btn_frame,
+            text="Выбрать файлы",
+            command=self.select_input_files,
             width=150,
             height=35,
             bg_color=self.colors['secondary'],
             hover_color=self.colors['primary'],
             corner_radius=15
         )
-        select_btn.pack(side=tk.RIGHT)
+        select_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Фрейм для настроек
-        settings_frame = tk.LabelFrame(
-            main_frame, 
-            text="⚙️ Настройки проверки", 
-            font=("Arial", 11, "bold"),
-            bg=self.colors['light'],
-            fg=self.colors['dark'],
-            padx=15,
-            pady=15,
-            relief=tk.RAISED,
-            bd=2
+        clear_btn = RoundedButton(
+            btn_frame,
+            text="Очистить список",
+            command=self.clear_input_files,
+            width=130,
+            height=35,
+            bg_color=self.colors['accent'],
+            hover_color=self.colors['secondary'],
+            corner_radius=15
         )
-        settings_frame.pack(fill=tk.X, pady=10)
+        clear_btn.pack(side=tk.LEFT)
         
-        # Режим валидации
+        # Фрейм настроек
+        settings_frame = tk.LabelFrame(
+            main_frame,
+            text="⚙️ Настройки проверки",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
+            fg=self.colors['dark'],
+            padx=12,
+            pady=12,
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#E2E8F0"
+        )
+        settings_frame.pack(fill=tk.X, pady=(0, 12))
+        
         mode_label = tk.Label(
-            settings_frame, 
+            settings_frame,
             text="Режим валидации:",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['light'],
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
             fg=self.colors['dark']
         )
         mode_label.grid(row=0, column=0, sticky=tk.W, pady=8)
         
-        mode_frame = tk.Frame(settings_frame, bg=self.colors['light'])
+        mode_frame = tk.Frame(settings_frame, bg=self.colors['panel'])
         mode_frame.grid(row=0, column=1, columnspan=2, sticky=tk.W, padx=10)
         
         strict_radio = tk.Radiobutton(
@@ -333,11 +283,11 @@ class EmailValidatorGUI:
             text="🔒 Строгий (максимальная точность)",
             variable=self.validation_mode,
             value="strict",
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            selectcolor=self.colors['light'],
-            activebackground=self.colors['light'],
+            selectcolor=self.colors['panel'],
+            activebackground=self.colors['panel'],
             activeforeground=self.colors['primary']
         )
         strict_radio.pack(side=tk.LEFT, padx=10)
@@ -347,52 +297,58 @@ class EmailValidatorGUI:
             text="✨ Лояльный (+15-20% валидных)",
             variable=self.validation_mode,
             value="lenient",
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            selectcolor=self.colors['light'],
-            activebackground=self.colors['light'],
+            selectcolor=self.colors['panel'],
+            activebackground=self.colors['panel'],
             activeforeground=self.colors['accent']
         )
         lenient_radio.pack(side=tk.LEFT, padx=10)
         
-        # SMTP проверка
-        smtp_check = tk.Checkbutton(
+        opts_label = tk.Label(
             settings_frame,
-            text="✓ Выполнять SMTP проверку",
-            variable=self.check_smtp,
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            text="Формат результата:",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
+            fg=self.colors['dark']
+        )
+        opts_label.grid(row=1, column=0, sticky=tk.W, pady=(12, 4))
+        
+        full_sheet_check = tk.Checkbutton(
+            settings_frame,
+            text="✓ Добавить лист с полными результатами проверки",
+            variable=self.include_full_results_sheet,
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            selectcolor=self.colors['light'],
-            activebackground=self.colors['light'],
+            selectcolor=self.colors['panel'],
+            activebackground=self.colors['panel'],
             activeforeground=self.colors['primary']
         )
-        smtp_check.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=5)
+        full_sheet_check.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=2)
         
-        # Catch-all
-        catchall_check = tk.Checkbutton(
+        only_valid_check = tk.Checkbutton(
             settings_frame,
-            text="✓ Считать валидными catch-all адреса",
-            variable=self.accept_catch_all,
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            text="✓ Получить только список валидных почт (доп. лист)",
+            variable=self.only_valid_emails_sheet,
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            selectcolor=self.colors['light'],
-            activebackground=self.colors['light'],
+            selectcolor=self.colors['panel'],
+            activebackground=self.colors['panel'],
             activeforeground=self.colors['primary']
         )
-        catchall_check.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=5)
+        only_valid_check.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=2)
         
-        # Таймаут и количество
-        params_frame = tk.Frame(settings_frame, bg=self.colors['light'])
-        params_frame.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=10)
+        params_frame = tk.Frame(settings_frame, bg=self.colors['panel'])
+        params_frame.grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=10)
         
         timeout_label = tk.Label(
             params_frame,
             text="Таймаут (сек):",
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark']
         )
         timeout_label.pack(side=tk.LEFT, padx=(0, 5))
@@ -401,17 +357,17 @@ class EmailValidatorGUI:
             params_frame,
             textvariable=self.timeout,
             width=10,
-            font=("Arial", 10),
-            relief=tk.SUNKEN,
-            bd=2
+            font=("Segoe UI", 10),
+            relief=tk.SOLID,
+            bd=1
         )
         timeout_entry.pack(side=tk.LEFT, padx=5)
         
         max_label = tk.Label(
             params_frame,
             text="Макс. email:",
-            font=("Arial", 10),
-            bg=self.colors['light'],
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
             fg=self.colors['dark']
         )
         max_label.pack(side=tk.LEFT, padx=(20, 5))
@@ -420,24 +376,23 @@ class EmailValidatorGUI:
             params_frame,
             textvariable=self.max_emails,
             width=10,
-            font=("Arial", 10),
-            relief=tk.SUNKEN,
-            bd=2
+            font=("Segoe UI", 10),
+            relief=tk.SOLID,
+            bd=1
         )
         max_entry.pack(side=tk.LEFT, padx=5)
         
         hint_label = tk.Label(
             params_frame,
             text="(оставьте пустым для всех)",
-            font=("Arial", 9),
-            bg=self.colors['light'],
-            fg="#757575"
+            font=("Segoe UI", 9),
+            bg=self.colors['panel'],
+            fg="#64748B"
         )
         hint_label.pack(side=tk.LEFT, padx=10)
         
-        # Кнопка запуска
         button_frame = tk.Frame(main_frame, bg=self.colors['light'])
-        button_frame.pack(pady=20)
+        button_frame.pack(pady=16)
         
         self.start_button = RoundedButton(
             button_frame,
@@ -452,34 +407,77 @@ class EmailValidatorGUI:
         )
         self.start_button.pack()
         
-        # Прогресс бар (змейка)
-        progress_frame = tk.Frame(main_frame, bg=self.colors['light'])
-        progress_frame.pack(fill=tk.X, pady=10)
+        # Блок прогресса: компактная сетка 2x2 + полоса, всегда виден
+        progress_outer = tk.Frame(main_frame, bg=self.colors['light'])
+        progress_outer.pack(fill=tk.X, pady=(0, 12))
         
-        self.progress = SnakeProgressBar(progress_frame, width=750, height=35)
-        self.progress.pack()
+        progress_frame = tk.LabelFrame(
+            progress_outer,
+            text="  Прогресс проверки  ",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
+            fg=self.colors['dark'],
+            padx=16,
+            pady=14,
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#E2E8F0"
+        )
+        progress_frame.pack(fill=tk.X)
         
-        # Статус
+        # Сетка: строка 0 — Файл | Обработано; строка 1 — Процент | Осталось
+        self.progress_file_label = tk.Label(
+            progress_frame,
+            text="Файл: —",
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
+            fg=self.colors['dark']
+        )
+        self.progress_file_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 24), pady=(0, 6))
+        
+        self.progress_count_label = tk.Label(
+            progress_frame,
+            text="Обработано: 0 из 0",
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
+            fg=self.colors['dark']
+        )
+        self.progress_count_label.grid(row=0, column=1, sticky=tk.W, pady=(0, 6))
+        
+        self.progress_percent_label = tk.Label(
+            progress_frame,
+            text="Процент: 0%",
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
+            fg=self.colors['dark']
+        )
+        self.progress_percent_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 24), pady=(0, 10))
+        
+        self.progress_eta_label = tk.Label(
+            progress_frame,
+            text="Осталось примерно: —",
+            font=("Segoe UI", 10),
+            bg=self.colors['panel'],
+            fg=self.colors['dark']
+        )
+        self.progress_eta_label.grid(row=1, column=1, sticky=tk.W, pady=(0, 10))
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, length=400, mode='determinate')
+        self.progress_bar.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(0, 0))
+        progress_frame.columnconfigure(0, weight=1)
+        progress_frame.columnconfigure(1, weight=1)
+        
+        # Статус и кнопка скачивания
         self.status_label = tk.Label(
             main_frame,
             text="✓ Готов к работе",
-            font=("Arial", 11, "bold"),
+            font=("Segoe UI", 11, "bold"),
             bg=self.colors['light'],
             fg=self.colors['success']
         )
-        self.status_label.pack(pady=10)
+        self.status_label.pack(pady=(8, 4))
         
-        # Метка для времени до завершения
-        self.time_label = tk.Label(
-            main_frame,
-            text="",
-            font=("Arial", 10),
-            bg=self.colors['light'],
-            fg=self.colors['dark']
-        )
-        self.time_label.pack(pady=5)
-        
-        # Кнопка скачивания результата
         self.download_button = RoundedButton(
             main_frame,
             text="📥 Скачать результат",
@@ -490,32 +488,36 @@ class EmailValidatorGUI:
             hover_color=self.colors['secondary'],
             corner_radius=20
         )
-        self.download_button.pack(pady=10)
-        self.download_button.disable()  # Начинаем с отключенной кнопки
+        self.download_button.pack(pady=(0, 16))
+        self.download_button.disable()
         
-        # Информационная панель
+        # Информационная панель (без expand — не отжимает прогресс)
         info_frame = tk.LabelFrame(
             main_frame,
-            text="ℹ️ Информация",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['light'],
+            text="  ℹ️ Информация  ",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['panel'],
             fg=self.colors['dark'],
-            padx=15,
+            padx=14,
             pady=10,
-            relief=tk.RAISED,
-            bd=2
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground="#E2E8F0"
         )
-        info_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        info_frame.pack(fill=tk.X, pady=(0, 20))
         
         info_text = """🔒 Строгий режим:
    • Только адреса с высокой надежностью
    • Обязательная активность email
-   • Проверка репутации домена
+   • Обязательная доставляемость
+   • Проверка на подозрительные домены
    • Максимальная точность (95-98%)
 
 ✨ Лояльный режим:
    • Адреса с высокой и средней надежностью
    • Мягкие требования к активности
+   • Мягкие требования к доставляемости
    • На 15-20% больше валидных адресов
    • Подходит для массовых рассылок"""
         
@@ -523,31 +525,36 @@ class EmailValidatorGUI:
             info_frame,
             text=info_text.strip(),
             justify=tk.LEFT,
-            font=("Arial", 9),
-            bg=self.colors['light'],
+            font=("Segoe UI", 9),
+            bg=self.colors['panel'],
             fg=self.colors['dark']
         )
-        info_label.pack(anchor=tk.W, padx=10, pady=5)
+        info_label.pack(anchor=tk.W, padx=6, pady=6)
     
-    def select_input_file(self):
-        filename = filedialog.askopenfilename(
-            title="Выберите файл с email адресами",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+    def select_input_files(self):
+        filenames = filedialog.askopenfilenames(
+            title="Выберите файлы с email адресами (можно несколько)",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("CSV", "*.csv"), ("All files", "*.*")]
         )
-        if filename:
-            self.input_file.set(filename)
-            base_name = os.path.splitext(os.path.basename(filename))[0]
-            output_dir = os.path.dirname(filename)
-            self.output_file.set(os.path.join(output_dir, f"{base_name}_validated.xlsx"))
+        if filenames:
+            for f in filenames:
+                if f and f not in self.input_files:
+                    self.input_files.append(f)
+                    self.file_listbox.insert(tk.END, os.path.basename(f))
+    
+    def clear_input_files(self):
+        self.input_files.clear()
+        self.file_listbox.delete(0, tk.END)
     
     def start_validation(self):
-        if not self.input_file.get():
-            messagebox.showerror("Ошибка", "Пожалуйста, выберите файл с email адресами")
+        if not self.input_files:
+            messagebox.showerror("Ошибка", "Пожалуйста, выберите один или несколько файлов с email адресами")
             return
         
-        if not os.path.exists(self.input_file.get()):
-            messagebox.showerror("Ошибка", "Выбранный файл не существует")
-            return
+        for f in self.input_files:
+            if not os.path.exists(f):
+                messagebox.showerror("Ошибка", f"Файл не существует:\n{f}")
+                return
         
         if self.is_processing:
             messagebox.showwarning("Внимание", "Проверка уже выполняется")
@@ -563,54 +570,10 @@ class EmailValidatorGUI:
         except ValueError:
             max_emails_val = None
         
-        # Подсчитываем количество email для оценки времени
-        try:
-            import pandas as pd
-            df = pd.read_excel(self.input_file.get())
-            
-            # Находим столбец с email
-            email_column = None
-            for col in df.columns:
-                col_lower = str(col).lower()
-                if any(keyword in col_lower for keyword in ['email', 'e-mail', 'почта', 'mail', 'адрес']):
-                    email_column = col
-                    break
-            
-            if email_column is None:
-                email_column = df.columns[0]
-            
-            # Подсчитываем уникальные email
-            emails = []
-            seen_emails = set()
-            for value in df[email_column]:
-                if pd.notna(value):
-                    email_str = str(value).strip()
-                    if email_str and email_str.lower() not in ['nan', 'none', '']:
-                        email_lower = email_str.lower()
-                        if email_lower not in seen_emails:
-                            seen_emails.add(email_lower)
-                            emails.append(email_str)
-            
-            total_count = len(emails)
-            if max_emails_val and max_emails_val > 0:
-                total_count = min(total_count, max_emails_val)
-            
-            # Оценка времени (с SMTP: ~1.5 сек/email, без SMTP: ~0.7 сек/email)
-            avg_time = 1.5 if self.check_smtp.get() else 0.7
-            estimated_seconds = total_count * avg_time
-            
-            if estimated_seconds > 60:
-                time_str = f"{int(estimated_seconds // 60)} мин {int(estimated_seconds % 60)} сек"
-            else:
-                time_str = f"{int(estimated_seconds)} сек"
-            
-            self.time_label.config(text=f"Примерное время до завершения: ~{time_str}")
-        except Exception as e:
-            self.time_label.config(text="")
-        
+        self.stop_flag = {}
         self.is_processing = True
         self.start_button.config(state=tk.DISABLED)
-        self.progress.start()
+        self._reset_progress_display()
         self.status_label.config(text="⏳ Проверка выполняется...", fg=self.colors['accent'])
         self.download_button.disable()
         
@@ -621,65 +584,124 @@ class EmailValidatorGUI:
         )
         thread.start()
     
+    def _reset_progress_display(self):
+        """Сброс блока прогресса к начальному виду."""
+        self.progress_file_label.config(text="Файл: —")
+        self.progress_count_label.config(text="Обработано: 0 из 0")
+        self.progress_percent_label.config(text="Процент: 0%")
+        self.progress_eta_label.config(text="Осталось примерно: —")
+        self.progress_bar['value'] = 0
+
     def run_validation(self, timeout, max_emails):
         try:
-            if not self.output_file.get():
-                base_name = os.path.splitext(os.path.basename(self.input_file.get()))[0]
+            result_paths = []
+            total_files = len(self.input_files)
+
+            for file_idx, input_path in enumerate(self.input_files):
+                if self.stop_flag.get('stop'):
+                    break
+                base_name = os.path.splitext(os.path.basename(input_path))[0]
+                file_display_name = os.path.basename(input_path)
+                output_dir = os.path.dirname(input_path)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = os.path.join(
-                    os.path.dirname(self.input_file.get()),
-                    f"{base_name}_{timestamp}.xlsx"
+                output_path = os.path.join(output_dir, f"{base_name}_validated_{timestamp}.xlsx")
+
+                def make_cb(fname, idx, total_f):
+                    def _cb(cur, tot, msg, percent, eta_seconds):
+                        def update():
+                            self.progress_file_label.config(text=f"Файл: {fname}")
+                            self.progress_count_label.config(text=f"Обработано: {cur} из {tot}")
+                            self.progress_percent_label.config(text=f"Процент: {percent:.1f}%")
+                            if eta_seconds is not None and eta_seconds > 0:
+                                if eta_seconds >= 60:
+                                    eta_str = f"{int(eta_seconds // 60)} мин {int(eta_seconds % 60)} сек"
+                                else:
+                                    eta_str = f"{int(eta_seconds)} сек"
+                                self.progress_eta_label.config(text=f"Осталось примерно: {eta_str}")
+                            else:
+                                self.progress_eta_label.config(text="Осталось примерно: —")
+                            self.progress_bar['value'] = percent
+                        try:
+                            self.root.after(0, update)
+                        except Exception:
+                            pass
+                    return _cb
+
+                process_excel_file_advanced(
+                    input_file=input_path,
+                    output_file=output_path,
+                    check_smtp=True,  # SMTP всегда включён
+                    timeout=timeout,
+                    accept_catch_all=False,
+                    max_emails=max_emails,
+                    validation_mode=self.validation_mode.get(),
+                    include_full_results_sheet=self.include_full_results_sheet.get(),
+                    only_valid_emails_sheet=self.only_valid_emails_sheet.get(),
+                    progress_callback=make_cb(file_display_name, file_idx, total_files),
+                    stop_flag=self.stop_flag,
                 )
-            else:
-                output_path = self.output_file.get()
+                result_paths.append(output_path)
             
-            process_excel_file(
-                input_file=self.input_file.get(),
-                output_file=output_path,
-                check_smtp=self.check_smtp.get(),
-                timeout=timeout,
-                accept_catch_all=self.accept_catch_all.get(),
-                max_emails=max_emails,
-                validation_mode=self.validation_mode.get()
-            )
-            
-            self.result_file = output_path
-            
-            self.root.after(0, self.validation_complete, True, "✓ Проверка завершена успешно!")
+            self.result_files = result_paths
+            msg = f"✓ Проверка завершена! Обработано файлов: {len(result_paths)}"
+            self.root.after(0, self.validation_complete, True, msg)
             
         except Exception as e:
             self.root.after(0, self.validation_complete, False, f"✗ Ошибка: {str(e)}")
     
     def validation_complete(self, success, message):
         self.is_processing = False
-        self.progress.stop()
+        self._reset_progress_display()
         self.start_button.config(state=tk.NORMAL)
-        self.time_label.config(text="")  # Очищаем информацию о времени
         
         if success:
             self.status_label.config(text=message, fg=self.colors['success'])
             self.download_button.enable(self.colors['accent'])
-            messagebox.showinfo("Успех", f"Проверка завершена!\n\nРезультат сохранен в:\n{self.result_file}")
+            detail = "\n".join(self.result_files) if self.result_files else ""
+            messagebox.showinfo("Успех", f"Проверка завершена!\n\nРезультаты сохранены:\n{detail}")
         else:
             self.status_label.config(text=message, fg=self.colors['error'])
             messagebox.showerror("Ошибка", message)
     
     def download_result(self):
-        if not self.result_file or not os.path.exists(self.result_file):
+        if not self.result_files:
+            messagebox.showerror("Ошибка", "Файлы результата не найдены")
+            return
+        first = self.result_files[0]
+        if not os.path.exists(first):
             messagebox.showerror("Ошибка", "Файл результата не найден")
             return
         
-        import subprocess
-        import platform
+        import shutil
         
-        if platform.system() == "Windows":
-            os.startfile(os.path.dirname(os.path.abspath(self.result_file)))
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", os.path.dirname(os.path.abspath(self.result_file))])
-        else:
-            subprocess.Popen(["xdg-open", os.path.dirname(os.path.abspath(self.result_file))])
+        folder = filedialog.askdirectory(
+            title="Выберите папку для сохранения результатов",
+            initialdir=os.path.dirname(os.path.abspath(first))
+        )
+        if not folder:
+            return
         
-        messagebox.showinfo("Информация", f"Файл находится в:\n{self.result_file}")
+        copied = []
+        errors = []
+        for src in self.result_files:
+            if not os.path.exists(src):
+                errors.append(f"Не найден: {os.path.basename(src)}")
+                continue
+            name = os.path.basename(src)
+            dest = os.path.join(folder, name)
+            try:
+                shutil.copy2(src, dest)
+                copied.append(name)
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+        
+        if copied:
+            msg = f"Скопировано в папку:\n{folder}\n\nФайлы:\n" + "\n".join(copied)
+            if errors:
+                msg += "\n\nОшибки:\n" + "\n".join(errors)
+            messagebox.showinfo("Готово", msg)
+        elif errors:
+            messagebox.showerror("Ошибка", "\n".join(errors))
 
 
 def main():

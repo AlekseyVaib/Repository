@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Валидатор</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1>Валидатор</h1>
+                <p class="subtitle">Валидация email адресов</p>
+            </div>
+        </header>
+
+        <!-- Основной контент -->
+        <main class="main-content">
+            <!-- Форма загрузки файла -->
+            <div class="card file-card">
+                <h2>📁 Файл с email адресами</h2>
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="file-upload-area" id="fileUploadArea">
+                        <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.csv" required>
+                        <label for="fileInput" class="file-label">
+                            <span class="file-icon">📄</span>
+                            <span class="file-text" id="fileText">Выберите файл или перетащите его сюда</span>
+                        </label>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Настройки проверки -->
+            <div class="card settings-card">
+                <h2>⚙️ Настройки проверки</h2>
+                
+                <div class="setting-group">
+                    <label class="setting-label">Режим валидации:</label>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="validation_mode" value="strict" checked>
+                            <span>🔒 Строгий (максимальная точность)</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="validation_mode" value="lenient">
+                            <span>✨ Лояльный (+15-20% валидных)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="check_smtp" checked>
+                        <span>✓ Выполнять SMTP проверку</span>
+                    </label>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-item">
+                        <label for="timeout">Таймаут (сек):</label>
+                        <input type="number" id="timeout" name="timeout" value="10" min="5" max="60">
+                    </div>
+                    <div class="setting-item">
+                        <label for="max_emails">Макс. email:</label>
+                        <input type="number" id="max_emails" name="max_emails" min="1" placeholder="Все">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Кнопка запуска -->
+            <div class="button-container">
+                <button id="startButton" class="btn btn-primary" disabled>
+                    🚀 Начать проверку
+                </button>
+                <button id="stopButton" class="btn btn-secondary" style="display: none;">
+                    Остановить
+                </button>
+            </div>
+
+            <!-- Прогресс -->
+            <div class="card progress-card" id="progressCard" style="display: none;">
+                <h2>Прогресс проверки</h2>
+                <div class="progress-info" id="progressInfo">
+                    <div class="progress-row"><strong>Файл:</strong> <span id="progressFile">—</span></div>
+                    <div class="progress-row"><strong>Обработано:</strong> <span id="progressCount">0 из 0</span></div>
+                    <div class="progress-row"><strong>Процент:</strong> <span id="progressPercent">0%</span></div>
+                    <div class="progress-row"><strong>Осталось примерно:</strong> <span id="progressEta">—</span></div>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Статус -->
+            <div class="status-message" id="statusMessage"></div>
+
+            <!-- Кнопка скачивания -->
+            <div class="button-container" id="downloadContainer" style="display: none;">
+                <button id="downloadButton" class="btn btn-accent">
+                    📥 Скачать результат
+                </button>
+            </div>
+
+            <!-- Информационная панель -->
+            <div class="card info-card">
+                <h2>ℹ️ Информация</h2>
+                <div class="info-content">
+                    <div class="info-section">
+                        <strong>🔒 Строгий режим:</strong>
+                        <ul>
+                            <li>Только адреса с высокой надежностью</li>
+                            <li>Обязательная активность email</li>
+                            <li>Обязательная доставляемость</li>
+                            <li>Максимальная точность (95-98%)</li>
+                        </ul>
+                    </div>
+                    <div class="info-section">
+                        <strong>✨ Лояльный режим:</strong>
+                        <ul>
+                            <li>Адреса с высокой и средней надежностью</li>
+                            <li>Мягкие требования к активности</li>
+                            <li>На 15-20% больше валидных адресов</li>
+                            <li>Подходит для массовых рассылок</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
