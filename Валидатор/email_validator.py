@@ -991,7 +991,7 @@ def process_excel_file_advanced(
     """
     Обработка Excel файла с сохранением исходной таблицы и опциями вывода.
 
-    - Лист 1 «Данные»: исходная таблица + столбец «Статус валидации» (Да/Нет/X) рядом с столбцом Email.
+    - Лист 1 «Данные»: исходная таблица + столбец «Валидность» (Да/Нет/X) справа от столбца с email.
     - Лист 2 «Результаты проверки»: полная детализация (если include_full_results_sheet=True).
     - Лист 3 «Только валидные»: строки с валидными email (если only_valid_emails_sheet=True).
 
@@ -1105,12 +1105,12 @@ def process_excel_file_advanced(
         else:
             status_by_idx[idx] = email_to_status.get(email.lower(), '–')
 
-    # Вставляем столбец «Статус валидации» сразу после столбца с email
+    # Вставляем столбец «Валидность» сразу справа от столбца с email
     col_list = list(df.columns)
     pos = col_list.index(email_col) + 1
-    new_cols = col_list[:pos] + ['Статус валидации'] + col_list[pos:]
+    new_cols = col_list[:pos] + ['Валидность'] + col_list[pos:]
     table_with_status = df.reindex(columns=new_cols)
-    table_with_status['Статус валидации'] = table_with_status.index.map(lambda i: status_by_idx.get(i, '–'))
+    table_with_status['Валидность'] = table_with_status.index.map(lambda i: status_by_idx.get(i, '–'))
 
     # Полные результаты (в порядке проверки)
     full_results_df = pd.DataFrame(results_list)
@@ -1132,7 +1132,7 @@ def process_excel_file_advanced(
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
         table_with_status.to_excel(writer, sheet_name='Данные', index=False)
         ws_data = writer.sheets['Данные']
-        # Форматирование столбца «Статус валидации» на листе «Данные» (Да / Нет / X)
+        # Форматирование столбца «Валидность» на листе «Данные» (Да / Нет / X)
         for row_idx in range(2, len(table_with_status) + 2):
             cell = ws_data.cell(row=row_idx, column=pos + 1)
             if cell.value is not None:
@@ -1173,11 +1173,11 @@ def process_excel_file_advanced(
                 ws_full.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
 
         if only_valid_emails_sheet:
-            valid_mask = table_with_status['Статус валидации'] == 'Да'
+            valid_mask = table_with_status['Валидность'] == 'Да'
             only_valid_df = table_with_status.loc[valid_mask].copy()
             only_valid_df.to_excel(writer, sheet_name='Только валидные', index=False)
             ws_valid = writer.sheets['Только валидные']
-            status_col_idx = new_cols.index('Статус валидации') + 1
+            status_col_idx = new_cols.index('Валидность') + 1
             for row_idx in range(2, len(only_valid_df) + 2):
                 cell = ws_valid.cell(row=row_idx, column=status_col_idx)
                 cell.fill = green_fill

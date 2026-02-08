@@ -4,6 +4,72 @@ let currentTaskId = null;
 let statusCheckInterval = null;
 let isProcessing = false;
 
+// Звуки: из папки static/sounds/ (upload.mp3, start.mp3, complete.mp3) или встроенный сигнал
+const SOUND_BASE = '/static/sounds/';
+const SOUND_FILES = { upload: 'upload', start: 'start', complete: 'complete' };
+
+function playSound(type) {
+    const name = SOUND_FILES[type];
+    if (!name) return;
+    const audio = new Audio(SOUND_BASE + name + '.mp3');
+    let fallbackDone = false;
+    function doFallback() {
+        if (fallbackDone) return;
+        fallbackDone = true;
+        fallbackBeep(type);
+    }
+    audio.addEventListener('error', doFallback, { once: true });
+    audio.play().catch(doFallback);
+}
+
+function fallbackBeep(type) {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        if (type === 'upload') {
+            osc.frequency.setValueAtTime(523, ctx.currentTime);
+            osc.type = 'sine';
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.15);
+        } else if (type === 'start') {
+            osc.frequency.setValueAtTime(659, ctx.currentTime);
+            osc.type = 'sine';
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.12);
+            setTimeout(() => {
+                const o2 = ctx.createOscillator();
+                const g2 = ctx.createGain();
+                o2.connect(g2);
+                g2.connect(ctx.destination);
+                g2.gain.setValueAtTime(0.15, ctx.currentTime);
+                g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+                o2.frequency.setValueAtTime(784, ctx.currentTime);
+                o2.type = 'sine';
+                o2.start(ctx.currentTime);
+                o2.stop(ctx.currentTime + 0.12);
+            }, 120);
+        } else if (type === 'complete') {
+            [523, 659, 784].forEach((freq, i) => {
+                const o = ctx.createOscillator();
+                const g = ctx.createGain();
+                o.connect(g);
+                g.connect(ctx.destination);
+                g.gain.setValueAtTime(0.12, ctx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+                o.frequency.setValueAtTime(freq, ctx.currentTime);
+                o.type = 'sine';
+                o.start(ctx.currentTime + i * 0.12);
+                o.stop(ctx.currentTime + i * 0.12 + 0.25);
+            });
+        }
+    } catch (e) { /* звуки опциональны */ }
+}
+
 // Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
     initializeFileUpload();
@@ -24,6 +90,7 @@ function initializeFileUpload() {
             fileText.textContent = `Выбран файл: ${file.name}`;
             fileText.classList.add('has-file');
             startButton.disabled = false;
+            playSound('upload');
         } else {
             fileText.textContent = 'Выберите файл или перетащите его сюда';
             fileText.classList.remove('has-file');
@@ -54,6 +121,7 @@ function initializeFileUpload() {
                 fileText.textContent = `Выбран файл: ${file.name}`;
                 fileText.classList.add('has-file');
                 startButton.disabled = false;
+                playSound('upload');
             } else {
                 showStatus('error', 'Неподдерживаемый формат файла. Используйте .xlsx, .xls или .csv');
             }
@@ -89,12 +157,12 @@ async function startValidation() {
         return;
     }
 
-    // Собираем данные формы
+    // Собираем данные формы (SMTP всегда включён)
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('check_smtp', document.querySelector('input[name="check_smtp"]').checked);
     formData.append('timeout', document.getElementById('timeout').value);
-    formData.append('validation_mode', document.querySelector('input[name="validation_mode"]:checked').value);
+    formData.append('include_full_results_sheet', document.getElementById('include_full_results_sheet').checked);
+    formData.append('only_valid_emails_sheet', document.getElementById('only_valid_emails_sheet').checked);
     
     const maxEmails = document.getElementById('max_emails').value;
     if (maxEmails) {
@@ -124,6 +192,7 @@ async function startValidation() {
 
         currentTaskId = data.task_id;
         showStatus('info', 'Файл загружен, валидация началась');
+        playSound('start');
         
         // Начинаем проверку статуса
         startStatusCheck();
@@ -162,6 +231,7 @@ function startStatusCheck() {
             if (data.status === 'completed') {
                 clearInterval(statusCheckInterval);
                 statusCheckInterval = null;
+                playSound('complete');
                 showStatus('success', '✓ Проверка завершена успешно!');
                 document.getElementById('downloadContainer').style.display = 'block';
                 document.getElementById('downloadButton').onclick = () => downloadResult();

@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import logging
-from email_validator import process_excel_file, EmailValidator
+from email_validator import process_excel_file_advanced
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -62,30 +62,34 @@ def process_validation_task(task_id, file_path, options):
         output_filename = f"validated_{task_id}_{timestamp}.xlsx"
         output_path = os.path.join(app.config['RESULTS_FOLDER'], output_filename)
         
-        def progress_callback(current_file, processed, total, percent, eta_seconds):
+        current_file_name = os.path.basename(file_path)
+        
+        def progress_callback(current, total, message, percent, eta_seconds):
             tasks[task_id]['progress'] = round(percent, 1)
-            tasks[task_id]['current_file'] = current_file
-            tasks[task_id]['processed'] = processed
+            tasks[task_id]['current_file'] = current_file_name
+            tasks[task_id]['processed'] = current
             tasks[task_id]['total'] = total
             tasks[task_id]['eta_seconds'] = eta_seconds
             eta_str = _format_eta(eta_seconds)
             tasks[task_id]['message'] = (
-                f"Файл: {current_file} — обработано {processed} из {total} ({percent:.1f}%)"
+                f"Файл: {current_file_name} — обработано {current} из {total} ({percent:.1f}%)"
                 + (f", осталось ~{eta_str}" if eta_str else "")
             )
         
-        # Запускаем валидацию
+        # Запускаем валидацию (таблица с любыми столбцами, столбец email определяется автоматически)
         logger.info(f"Запуск валидации для задачи {task_id}")
         
-        process_excel_file(
+        process_excel_file_advanced(
             input_file=file_path,
             output_file=output_path,
-            check_smtp=options.get('check_smtp', True),
+            check_smtp=True,
             timeout=options.get('timeout', 10),
-            accept_catch_all=False,  # опция убрана, catch-all помечаются как X
+            accept_catch_all=False,
             max_emails=options.get('max_emails'),
             validation_mode=options.get('validation_mode', 'strict'),
-            progress_callback=progress_callback
+            include_full_results_sheet=options.get('include_full_results_sheet', True),
+            only_valid_emails_sheet=options.get('only_valid_emails_sheet', False),
+            progress_callback=progress_callback,
         )
         
         # Обновляем статус задачи
@@ -125,12 +129,13 @@ def upload_file():
         if not allowed_file(file.filename):
             return jsonify({'error': 'Неподдерживаемый формат файла. Используйте .xlsx, .xls или .csv'}), 400
         
-        # Получаем параметры из формы (опция accept_catch_all убрана — catch-all помечаются как X)
+        # Параметры формы: SMTP всегда включён
         options = {
-            'check_smtp': request.form.get('check_smtp', 'true').lower() == 'true',
             'timeout': int(request.form.get('timeout', 10)),
             'validation_mode': request.form.get('validation_mode', 'strict'),
-            'max_emails': request.form.get('max_emails') or None
+            'max_emails': request.form.get('max_emails') or None,
+            'include_full_results_sheet': request.form.get('include_full_results_sheet', 'true').lower() == 'true',
+            'only_valid_emails_sheet': request.form.get('only_valid_emails_sheet', 'false').lower() == 'true',
         }
         
         if options['max_emails']:
